@@ -1,0 +1,105 @@
+global request= require('request');
+global mongoDb = require("mongoskin");
+global dapr = require("../BDD/API/dapr-v2.js");
+
+global RT = require('/opt/bpm/BDD/API/EXEC/index.js');
+global base = '/opt/bpm/oauth2/MQ';
+
+define Inbound {
+    header:null,
+    payload:null,
+    constructor : function(header,payload){
+        this.payload = payload;
+        this.header = header;
+    }
+}
+
+rule "config"
+{
+   when{
+      i : Inbound 1==1;
+   }
+   then{
+     console.dir(i.payload.id + "@ "+i.payload.status);
+     outBound.result = i.payload.status;
+   }
+}
+
+rule "save"
+{
+    when{
+        i : Inbound 1==1;
+    }
+    then{
+        var db = mongoDb.db("mongodb:\/\/mongo:27017/cog");
+        db.bind("MQ");
+        i.payload._id = i.payload.uuid;
+        db["MQ"].save(i.payload,function(err){
+            db.close();
+            next();
+        });
+    }
+}
+
+rule "cache"
+{
+  when{
+    i : Inbound 1==1;
+  }
+  then{
+    next();
+    dapr.daprClient.state.save("statestore",[ { key:"cog_"+i.payload.id, value:i.payload,"metadata": { "ttlInSeconds": "10" }  } ])
+        .then (  (d)=> {
+            console.dir(d);
+        }).catch((e)=>{
+            console.dir(e);
+        });
+  }
+}
+
+rule "save2"
+{
+    when{
+        i : Inbound 1==1;
+    }
+    then{
+        next();
+        var db = mongoDb.db("mongodb:\/\/mongo:27017/cog");
+        db.bind("MQ_all");
+        i.payload._id = i.payload.uuid+"@"+(new Date().getTime());
+        db["MQ_all"].save(i.payload,function(err){
+            db.close();
+        });
+    }
+}
+
+rule "EXE by topic"
+{
+   when{
+      i : Inbound 1==1
+   }
+   then{
+        next();
+
+        RT.EXEC( base, '.', "topic", "webhook",
+                 {
+                     payload: {}
+                 },
+                 (res)=>{
+                   if(res.err && res.err.code >= 0){
+                      console.error(res);
+                      if(res.err.code == 0)
+                         ;
+                      else
+                         ;
+                   } else {
+                         ;
+                   }
+                   //next();dd
+                 }
+               );
+
+
+   }//END then
+}
+                                 

@@ -1,2 +1,2 @@
 - docker build -t shawoo/mq:slim .
-- docker run --rm -it -p 8888:8888 -v $(pwd)/data/:/data shawoo/mq:slim
+- docker run --rm -it -p 8888:8888 -v $(pwd)/data/:/data/ shawoo/mq:slim

@@ -26,7 +26,7 @@ async def send_to_webhook(payload, url=webhook):
     payload["_id"] = payload.get("uuid", None)
     try:
         async with httpx.AsyncClient(verify=False) as client:
-            response = await client.post(url, json=payload, timeout=20.0)
+            response = await client.post(url, json=payload, timeout=5.0)
             if 200 <= response.status_code < 300:
                 print(f"Webhook 发送成功: {response.status_code}")
             else:

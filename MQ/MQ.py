@@ -292,22 +292,33 @@ def cancel_message(uuid: str, target: str):
     r.zrem(f"queue:{target}", uuid)
     return True
 
-def get_next_message(target: str):
-    items = r.zrange(f"queue:{target}", 0, 0)
-    if not items:
-        return None
+def get_next_message(target: str, initial=10, grow_factor=2, max_limit=200):
+    checked = 0
+    batch_size = initial
 
-    msg = r.hgetall(make_msg_key(items[0]))
-    if not msg:
-        return None
+    while checked < max_limit:
+        # 获取一批UUID
+        uuids = r.zrange(f"queue:{target}", checked, checked + batch_size - 1)
+        if not uuids:
+            return None
 
-    status = msg.get(b'status') or msg.get('status')
-    if isinstance(status, bytes):
-        status = status.decode()
+        for uuid in uuids:
+            msg = r.hgetall(make_msg_key(uuid))
+            if not msg:
+                continue
 
-    if status == MessageStatus.pending.value:
-        return msg
+            status = msg.get("status") or msg.get(b"status")
+            if isinstance(status, bytes):
+                status = status.decode()
 
+            if status == MessageStatus.pending.value:
+                return msg  # ✅ 找到 pending 的就返回
+
+        # 没找到，再扩大范围
+        checked += batch_size
+        batch_size *= grow_factor
+
+    # ⛔ 没找到任何 pending 的
     return None
 
 def ack_message(target: str, uuid: str):

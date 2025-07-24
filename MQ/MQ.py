@@ -443,4 +443,16 @@ async def query_status(target: str, uuid: str):
 async def stats(target: str, topic: str, status: str):
     return get_topic_stats(target, topic, status)
 
-    
+@app.get("/MQ/{target}/stats")
+def get_target_stats_all_statuses(target: str):
+    keys = r.keys("msg:*")
+    stats = {status.value: 0 for status in MessageStatus}
+
+    for key in keys:
+        msg = r.hgetall(key)
+        if msg.get("target") == target:
+            status = msg.get("status")
+            if status in stats:
+                stats[status] += 1
+
+    return {"target": target, "stats": stats}

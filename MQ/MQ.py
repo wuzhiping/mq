@@ -397,7 +397,7 @@ async def run_webhook_resend():
         return False
 
     print("🚀 Webhook resend 开始")
-    await asyncio.sleep(5) 
+    await asyncio.sleep(1) 
     try:
         todos = list_uuid_folders_by_creation()
         for f in todos:
@@ -412,8 +412,8 @@ async def run_webhook_resend():
 
 async def periodic_webhook_resend():
     while True:
+        await asyncio.sleep(60)  # 每1分钟执行一次
         await run_webhook_resend()
-        await asyncio.sleep(300)  # 每5分钟执行一次
 
 @app.on_event("startup")
 async def startup_event():

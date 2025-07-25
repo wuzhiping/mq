@@ -4,7 +4,7 @@ RUN apt-get update && \
     apt-get install -y redis-server vim && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
-
+RUN mkdir /data
 ADD . /src
 WORKDIR /src/MQ
 

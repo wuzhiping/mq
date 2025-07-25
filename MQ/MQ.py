@@ -336,6 +336,9 @@ def ack_message(target: str, uuid: str):
     # 更新状态
     r.hset(msg_key, "status", MessageStatus.acked.value)
 
+    # 取消 TTL，使消息永久保留
+    r.persist(msg_key)
+
     # 更新 priority
     try:
         current_priority = int(msg.get("priority", 0))

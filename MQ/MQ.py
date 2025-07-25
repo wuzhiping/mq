@@ -376,12 +376,47 @@ def get_topic_stats(target: str, topic: str, status: str):
     return {"topic": topic, "status": status, "count": count}
         
 # ----------- API Routes ----------- #
+import time
+import asyncio
+from fastapi import HTTPException
+
+LOCK_KEY = "lock:webhook_resend"
+LOCK_TIMEOUT = 30  # seconds
+
+def acquire_redis_lock(key: str, timeout: int) -> bool:
+    now = int(time.time())
+    expire_at = now + timeout + 1
+    return r.set(key, expire_at, nx=True, ex=timeout)
+
+def release_redis_lock(key: str):
+    r.delete(key)
+
+async def run_webhook_resend():
+    if not acquire_redis_lock(LOCK_KEY, LOCK_TIMEOUT):
+        print("🔒 Webhook resend 已在执行，跳过")
+        return False
+
+    print("🚀 Webhook resend 开始")
+    await asyncio.sleep(5) 
+    try:
+        todos = list_uuid_folders_by_creation()
+        for f in todos:
+            print(f"[Webhook Retry] 重发：{f[0]}")
+            await resend_failed_webhooks(f[0], webhook)
+        print("✅ Webhook resend 完成")
+        return True
+    except Exception as e:
+        print(f"Webhook resend 错误: {e}")
+    finally:
+        release_redis_lock(LOCK_KEY)
+
 @app.get("/MQ/webhook")
 async def resend_webhook():
-    todos = list_uuid_folders_by_creation()   
-    for f in todos:
-        print(f[0])
-        await resend_failed_webhooks(f[0], webhook)
+    success = await run_webhook_resend()
+    if not success:
+        raise HTTPException(status_code=409, detail="busy")
+    return {"status": "manual resend triggered"}
+    
     
 @app.post("/MQ/send")
 async def send(data: MessageCreate):

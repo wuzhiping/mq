@@ -322,7 +322,8 @@ def get_next_message(target: str, initial=10, grow_factor=2, max_limit=200):
     return None
 
 def ack_message(target: str, uuid: str):
-    msg = r.hgetall(make_msg_key(uuid))
+    msg_key = make_msg_key(uuid)
+    msg = r.hgetall(msg_key)
     if not msg:
         raise ValueError("Message not found")
 
@@ -332,7 +333,19 @@ def ack_message(target: str, uuid: str):
     if msg.get("status") != MessageStatus.pending.value:
         raise ValueError("Only 'Pending' messages can be acknowledged")
 
-    r.hset(make_msg_key(uuid), "status", MessageStatus.acked.value)
+    # 更新状态
+    r.hset(msg_key, "status", MessageStatus.acked.value)
+
+    # 更新 priority
+    try:
+        current_priority = int(msg.get("priority", 0))
+    except ValueError:
+        current_priority = 0
+    new_priority = current_priority + 100000
+
+    r.hset(msg_key, "priority", new_priority)
+    r.zadd(f"queue:{target}", {uuid: new_priority})
+    print(f"优先级更新为：{new_priority}")
 
 def update_status(uuid: str, status: MessageStatus, detail: Any, target: str):
     msg = r.hgetall(make_msg_key(uuid))

@@ -410,6 +410,16 @@ async def run_webhook_resend():
     finally:
         release_redis_lock(LOCK_KEY)
 
+async def periodic_webhook_resend():
+    while True:
+        await run_webhook_resend()
+        await asyncio.sleep(300)  # 每5分钟执行一次
+
+@app.on_event("startup")
+async def startup_event():
+    # 启动时开启后台定时任务
+    asyncio.create_task(periodic_webhook_resend())
+    
 @app.get("/MQ/webhook")
 async def resend_webhook():
     success = await run_webhook_resend()

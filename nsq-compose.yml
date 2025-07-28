@@ -13,6 +13,8 @@ services:
       /nsqd
       --lookupd-tcp-address=nsqlookupd:4160
       --data-path=/data
+      --mem-queue-size=0
+      --max-bytes-per-file=134217728
       --broadcast-address=10.17.1.26
     depends_on:
       - nsqlookupd

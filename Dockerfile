@@ -4,12 +4,15 @@ RUN apt-get update && \
     apt-get install -y redis-server vim && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
+
 RUN mkdir /data
 ADD . /src
 WORKDIR /src/MQ
 
 RUN pip install jupyterlab
 
-RUN pip install fastapi redis gunicorn uvicorn
+RUN pip install fastapi redis gunicorn uvicorn temporalio tqdm importlib aiohttp requests
 
-CMD /bin/bash -c  "redis-server /src/redis.conf --daemonize yes && jupyter lab --allow-root --ip=0.0.0.0 --NotebookApp.token='12345678' & gunicorn -w 5 -k uvicorn.workers.UvicornWorker --bind 0.0.0.0:8000 --timeout 120 --log-level debug --access-logfile -  MQ:app "
+COPY ./temporal /usr/local/bin/temporal
+
+CMD /bin/bash -c  "redis-server /src/redis.conf --daemonize yes && temporal server start-dev --db-filename /data/temporal.db --ip 0.0.0.0 & jupyter lab --allow-root --ip=0.0.0.0 --NotebookApp.token='12345678' & gunicorn -w 5 -k uvicorn.workers.UvicornWorker --bind 0.0.0.0:8000 --timeout 120 --log-level debug --access-logfile -  MQ:app "

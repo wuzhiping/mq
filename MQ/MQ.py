@@ -20,21 +20,23 @@ app = FastAPI(
 r = redis.Redis(host="localhost", port=6379, db=9,decode_responses=True)
 
 # ----------- webhooks ------------- #
-webhook = "https://www.example.com/oauth2/MQ"
+webhook = os.environ.get("webhook","")
 
 async def send_to_webhook(payload, url=webhook):
     payload["_id"] = payload.get("uuid", None)
-    try:
-        async with httpx.AsyncClient(verify=False) as client:
-            response = await client.post(url, json=payload, timeout=5.0)
-            if 200 <= response.status_code < 300:
-                print(f"Webhook 发送成功: {response.status_code}")
-            else:
-                print(f"Webhook 返回错误状态码: {response.status_code}")
-                save_failed_webhook(payload)
-    except Exception as e:
-        print(f"Webhook 发送失败: {e}")
-        save_failed_webhook(payload)
+    
+    if webhook != '':
+        try:
+            async with httpx.AsyncClient(verify=False) as client:
+                response = await client.post(url, json=payload, timeout=5.0)
+                if 200 <= response.status_code < 300:
+                    print(f"Webhook 发送成功: {response.status_code}")
+                else:
+                    print(f"Webhook 返回错误状态码: {response.status_code}")
+                    save_failed_webhook(payload)
+        except Exception as e:
+            print(f"Webhook 发送失败: {e}")
+            save_failed_webhook(payload)
 
     delete_message_if_completed(payload["target"], payload["uuid"])
 
@@ -86,7 +88,7 @@ def list_uuid_folders_by_creation(base_dir="webhook_failures"):
         readable_time = datetime.fromtimestamp(mod_time).strftime("%Y-%m-%d %H:%M:%S")
         results.append((os.path.basename(folder), readable_time))
 
-    return results 
+    return results[:10]
 
 async def resend_failed_webhooks(uuid: str, webhook_url: Optional[str] = None):
 
@@ -154,7 +156,7 @@ async def resend_failed_webhooks(uuid: str, webhook_url: Optional[str] = None):
             payload["_id"] = payload.get("uuid")
 
             async with httpx.AsyncClient(verify=False) as client:
-                response = await client.post(webhook_url, json=payload, timeout=20.0)
+                response = await client.post(webhook_url, json=payload, timeout=5.0)
 
             if 200 <= response.status_code < 300:
                 print(f"✅ Webhook 发送成功: {file_path}")
@@ -193,13 +195,20 @@ def delete_message_if_completed(target: str, uuid: str):
     }
 
     if status in deletable_statuses:
+        # # 删除消息哈希
+        # r.delete(make_msg_key(uuid))
+        # # 从队列zset移除
+        # r.zrem(f"queue:{target}", uuid)
+        # print(f"消息 {uuid} 因状态 {status} 被删除")
+        # return True
         # 删除消息哈希
-        r.delete(make_msg_key(uuid))
-        # 从队列zset移除
+        key = make_msg_key(uuid)
+        # 设置 TTL，而不是立即删除
+        r.expire(key, 24*60*60)
+        # 从队列 zset 移除
         r.zrem(f"queue:{target}", uuid)
-        print(f"消息 {uuid} 因状态 {status} 被删除")
+        print(f"消息 {uuid} 因状态 {status} 被标记，24 小时过期")
         return True
-
     return False
 
     
@@ -245,17 +254,23 @@ def save_message(data: MessageCreate) -> str:
     timestamp = datetime.now(timezone.utc).isoformat()
     msg_key = make_msg_key(uuid)
 
-    r.hset(msg_key, mapping={
+    # r.hset(msg_key, mapping={
+    pipe = r.pipeline()
+    pipe.hset(msg_key, mapping={
         "uuid": uuid,
         "topic": data.topic,
-        "payload": str(data.payload),
+        "payload": json.dumps(data.payload),
         "target": data.target,
         "resource": data.resource,
         "priority": data.priority,
         "timestamp": timestamp,
         "status": MessageStatus.pending.value
     })
-    r.zadd(f"queue:{data.target}", {uuid: data.priority})
+    # r.expire(msg_key, 7*24*60*60)
+    # r.zadd(f"queue:{data.target}", {uuid: data.priority})
+    pipe.expire(msg_key, 7*24*60*60)
+    pipe.zadd(f"queue:{data.target}", {uuid: data.priority})
+    pipe.execute()    
     return uuid
 
 def update_priority(uuid: str, target: str, new_priority: int):
@@ -396,11 +411,11 @@ def release_redis_lock(key: str):
 
 async def run_webhook_resend():
     if not acquire_redis_lock(LOCK_KEY, LOCK_TIMEOUT):
-        print("🔒 Webhook resend 已在执行，跳过")
+        # print("🔒 Webhook resend 已在执行，跳过")
         return False
 
-    print("🚀 Webhook resend 开始")
-    await asyncio.sleep(1) 
+    print("🚀 Webhook resend 开始 @", os.getpid())
+    await asyncio.sleep(2) 
     try:
         todos = list_uuid_folders_by_creation()
         for f in todos:
@@ -418,10 +433,26 @@ async def periodic_webhook_resend():
         await asyncio.sleep(60)  # 每1分钟执行一次
         await run_webhook_resend()
 
+#temporalio
+from temporalio.client import Client
+from temporalio.worker import Worker
+from jobs import MQflow
+from activities import RUN
+async def worker():
+    client = await Client.connect("localhost:7233")
+    worker = Worker(
+        client,
+        task_queue="MQ",
+        workflows=[MQflow],
+        activities=[RUN],
+        )
+    await worker.run()
+    
 @app.on_event("startup")
 async def startup_event():
     # 启动时开启后台定时任务
     asyncio.create_task(periodic_webhook_resend())
+    asyncio.create_task(worker())
     
 @app.get("/MQ/webhook")
 async def resend_webhook():
@@ -462,7 +493,11 @@ async def cancel(data: MessageCancelRequest):
 
 @app.get("/MQ/{target}/poll")
 async def poll(target: str):
-    return get_next_message(target)
+    # return get_next_message(target)
+    result = get_next_message(target)
+    if result is None:
+        raise HTTPException(status_code=404, detail="No job found")
+    return result
 
 @app.get("/MQ/{target}/poll/{uuid}")
 async def poll_by_uuid(target: str, uuid: str):
